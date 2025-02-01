@@ -7,7 +7,7 @@ import subprocess
 import ffmpeg
 import media as md
 
-TOKEN = ""
+TOKEN = "7197957512:AAHS6WLxnfXkEPgPfy_iAWZtWNO6VOAlkjg"
 
 # Function to enable multithread on the distort function in order to make it faster
 def enableMultithread(function, args):
