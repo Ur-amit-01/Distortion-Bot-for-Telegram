@@ -1,28 +1,24 @@
-"""
-
-Author: Bisnu Ray
-GitHub: https://github.com/bisnuray/
-Description: A Telegram bot to enhance photos using the Remini API.
-
-"""
-
-
-
 import os
 import base64
 import hashlib
 import httpx
 import asyncio
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, Router
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import Command
+from aiogram.enums import ParseMode
+from aiogram.types import FSInputFile
 
-bot = Bot(token='7197957512:AAHS6WLxnfXkEPgPfy_iAWZtWNO6VOAlkjg')   # REPLACE YOUR TELEGRAM BOT TOKEN HERE
-dp = Dispatcher(bot)
-
-API_KEY = "REMINI_API_KEY"   # REPLACE YOUR REMINI API KEY THAT HAS CREDITS
+# Initialize bot and dispatcher
+TOKEN = "YOUR_BOT_TOKEN"  # Replace with your bot token
+API_KEY = "REMINI_API_KEY"  # Replace with your Remini API Key
 CONTENT_TYPE = "image/jpeg"
 _TIMEOUT = 60
 _BASE_URL = "https://developer.remini.ai/api"
+
+bot = Bot(token=TOKEN)
+dp = Dispatcher()
+router = Router()  # Using routers (Recommended in Aiogram 3.x)
 
 
 def _get_image_md5_content(file_path: str) -> tuple[str, bytes]:
@@ -33,91 +29,107 @@ def _get_image_md5_content(file_path: str) -> tuple[str, bytes]:
 
 
 async def enhance_photo_and_send_link(file_path: str, chat_id: int):
+    """Enhances a photo using the Remini API and sends the result URL."""
     image_md5, content = _get_image_md5_content(file_path)
-
 
     async with httpx.AsyncClient(
         base_url=_BASE_URL,
         headers={"Authorization": f"Bearer {API_KEY}"},
     ) as client:
-        response = await client.post(
-            "/tasks",
-            json={
-                "tools": [
-                    {"type": "face_enhance", "mode": "beautify"},
-                    {"type": "background_enhance", "mode": "base"}
-                ],
-                "image_md5": image_md5,
-                "image_content_type": CONTENT_TYPE
-            }
-        )
-        assert response.status_code == 200
-        body = response.json()
-        task_id = body["task_id"]
+        try:
+            # Step 1: Create a Task
+            response = await client.post(
+                "/tasks",
+                json={
+                    "tools": [
+                        {"type": "face_enhance", "mode": "beautify"},
+                        {"type": "background_enhance", "mode": "base"},
+                    ],
+                    "image_md5": image_md5,
+                    "image_content_type": CONTENT_TYPE,
+                },
+            )
+            response.raise_for_status()
+            body = response.json()
+            task_id = body["task_id"]
 
-        response = await client.put(
-            body["upload_url"],
-            headers=body["upload_headers"],
-            content=content,
-            timeout=_TIMEOUT
-        )
-        assert response.status_code == 200
+            # Step 2: Upload the Image
+            upload_response = await client.put(
+                body["upload_url"],
+                headers=body["upload_headers"],
+                content=content,
+                timeout=_TIMEOUT,
+            )
+            upload_response.raise_for_status()
 
-        response = await client.post(f"/tasks/{task_id}/process")
-        assert response.status_code == 202
+            # Step 3: Process the Image
+            process_response = await client.post(f"/tasks/{task_id}/process")
+            process_response.raise_for_status()
 
-        for i in range(50):
-            response = await client.get(f"/tasks/{task_id}")
-            assert response.status_code == 200
+            # Step 4: Poll for Completion
+            for _ in range(50):
+                status_response = await client.get(f"/tasks/{task_id}")
+                status_response.raise_for_status()
+                if status_response.json()["status"] == "completed":
+                    break
+                await asyncio.sleep(2)
 
-            if response.json()["status"] == "completed":
-                break
-            else:
-                await asyncio.sleep(2)  # Use asyncio.sleep() instead of sleep()
+            # Step 5: Send Enhanced Photo Link
+            output_url = status_response.json()["result"]["output_url"]
+            await bot.send_message(chat_id, f"<b>Enhanced photo:</b> {output_url}", parse_mode=ParseMode.HTML)
+
+        except httpx.HTTPError as e:
+            await bot.send_message(chat_id, f"<b>Error enhancing the photo:</b> {e}", parse_mode=ParseMode.HTML)
+
+        finally:
+            os.remove(file_path)  # Ensure file cleanup
 
 
-        output_url = response.json()["result"]["output_url"]
-        await bot.send_message(chat_id, f"<b>Enhanced photo: </b> {output_url}", parse_mode='html')
-    # Remove the downloaded photo file
-
-    os.remove(file_path)
-
-@dp.message_handler(commands=['start'])
+@router.message(Command("start"))
 async def start_command(message: types.Message):
-    # Create the inline keyboard and buttons
-    keyboard = InlineKeyboardMarkup(row_width=2)
-    dev_button = InlineKeyboardButton("Dev 👨‍💻", url="https://t.me/TheSmartBisnu")
-    update_button = InlineKeyboardButton("Update ✅", url="https://t.me/PremiumNetworkTeam")
-    keyboard.add(dev_button, update_button)
+    """Handles the /start command."""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Dev 👨‍💻", url="https://t.me/TheSmartBisnu")],
+        [InlineKeyboardButton(text="Update ✅", url="https://t.me/PremiumNetworkTeam")]
+    ])
 
-    # Send the welcome message with the inline keyboard
-    await bot.send_message(
-        message.chat.id,
-        "<b>Welcome! I am a Smart Enhancer BOT. Please Send me a photo to enhance.</b>",
-        parse_mode='html',
-        reply_markup=keyboard
+    await message.answer(
+        "<b>Welcome! I am a Smart Enhancer BOT.\n\nPlease send me a photo to enhance.</b>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=keyboard,
     )
 
-@dp.message_handler(content_types=types.ContentType.PHOTO)
+
+@router.message(lambda msg: msg.photo)
 async def handle_photo(message: types.Message):
+    """Handles incoming photo messages."""
     photo = message.photo[-1]
     file_path = os.path.join(os.getcwd(), f"{photo.file_unique_id}.jpg")
-    await photo.download(file_path)
-    await bot.send_message(message.chat.id, "<b>Enhancing your photo...</b>", parse_mode='html')
+    await message.answer("<b>Enhancing your photo...</b>", parse_mode=ParseMode.HTML)
 
-    # Call the enhancement function and pass the file path and chat ID
+    try:
+        await message.photo[-1].download(file_path)
+        await enhance_photo_and_send_link(file_path, message.chat.id)
+    except Exception as e:
+        await message.answer(f"<b>Error:</b> {e}", parse_mode=ParseMode.HTML)
 
-    await enhance_photo_and_send_link(file_path, message.chat.id)
 
-
-@dp.message_handler()
+@router.message()
 async def handle_invalid_message(message: types.Message):
-    await bot.send_message(message.chat.id, "<b>I am not allowed to receive any text messages or emojis.\n\nPlease send only photos.</b>", parse_mode='html')
+    """Handles invalid messages (e.g., text, stickers)."""
+    await message.answer(
+        "<b>I only process photos.\n\nPlease send an image for enhancement.</b>",
+        parse_mode=ParseMode.HTML,
+    )
 
-# Start the bot
 
-if __name__ == '__main__':
-    loop = asyncio.get_event_loop()
-    loop.create_task(dp.start_polling())
-    loop.run_forever()
+async def main():
+    """Starts the bot."""
+    dp.include_router(router)
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())  # Correct way to run async code in Aiogram 3.x
 
