@@ -2,3 +2,4 @@ aiogram
 httpx
 asyncio
 flask
+gunicorn
