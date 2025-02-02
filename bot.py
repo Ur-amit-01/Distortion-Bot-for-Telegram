@@ -1,9 +1,7 @@
 """
 
 Author: Bisnu Ray
-
 GitHub: https://github.com/bisnuray/
-
 Description: A Telegram bot to enhance photos using the Remini API.
 
 """
@@ -18,7 +16,7 @@ import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-bot = Bot(token='YOUR_TOKEN_HERE')   # REPLACE YOUR TELEGRAM BOT TOKEN HERE
+bot = Bot(token='7197957512:AAHS6WLxnfXkEPgPfy_iAWZtWNO6VOAlkjg')   # REPLACE YOUR TELEGRAM BOT TOKEN HERE
 dp = Dispatcher(bot)
 
 
